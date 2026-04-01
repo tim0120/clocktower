@@ -7,26 +7,27 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     private let configStore = ConfigStore()
     private var config: BellConfig!
     private var preferencesWindowController: PreferencesWindowController?
-    private let isTestMode = CommandLine.arguments.contains("--test")
-    private let scheduledPrefix = "clocktower-scheduled-"
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        f.amSymbol = "am"
+        f.pmSymbol = "pm"
+        return f
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         config = configStore.load()
         NSApp.setActivationPolicy(.accessory)
         configureStatusItem()
-        configureNotifications()
-        if isTestMode {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                self?.fireBell(isTest: true)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-                NSApp.terminate(nil)
-            }
-        } else {
-            scheduleNotifications()
-            Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.scheduleNotifications() }
-            }
+
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+
+        scheduleNotifications()
+        Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.scheduleNotifications() }
         }
     }
 
@@ -51,14 +52,10 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         statusItem.menu = menu
     }
 
-    private func configureNotifications() {
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
-    }
+    // MARK: - Menu actions
 
     @objc private func sendTestBell() {
-        fireBell(isTest: true)
+        sendNotification(body: "\(renderBody()) [test]")
     }
 
     @objc private func openPreferences() {
@@ -72,7 +69,6 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
                 self?.preferencesWindowController = nil
             }
         }
-
         preferencesWindowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -90,96 +86,81 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         NSApp.terminate(nil)
     }
 
+    // MARK: - Scheduling
+
     private func scheduleNotifications() {
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests()
 
-        let dates = nextTriggerDates(intervalMinutes: max(1, config.intervalMinutes), limit: 64)
-        for date in dates {
-            let content = UNMutableNotificationContent()
-            content.title = config.title
-            content.body = renderBody(for: date, isTest: false)
-            if let soundName = config.soundName, !soundName.isEmpty {
-                content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: "\(soundName).aiff"))
-            } else {
-                content.sound = .default
-            }
-
+        for date in nextTriggerDates() {
             let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
             let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-            let identifier = "\(scheduledPrefix)\(Int(date.timeIntervalSince1970))"
-            center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
+            let request = UNNotificationRequest(
+                identifier: "clocktower-\(Int(date.timeIntervalSince1970))",
+                content: makeContent(body: renderBody(for: date)),
+                trigger: trigger
+            )
+            center.add(request)
         }
     }
 
-    private func nextTriggerDates(intervalMinutes: Int, limit: Int) -> [Date] {
-        let now = Date()
+    private func nextTriggerDates() -> [Date] {
+        let interval = max(1, config.intervalMinutes)
         let calendar = Calendar.current
-        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: now)
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date())
         let minute = components.minute ?? 0
-        let nextMinute = ((minute / intervalMinutes) + 1) * intervalMinutes
 
-        var nextComponents = components
-        nextComponents.second = 0
-
+        var next = components
+        next.second = 0
+        let nextMinute = ((minute / interval) + 1) * interval
         if nextMinute >= 60 {
-            nextComponents.minute = nextMinute - 60
-            nextComponents.hour = (components.hour ?? 0) + 1
+            next.minute = nextMinute - 60
+            next.hour = (components.hour ?? 0) + 1
         } else {
-            nextComponents.minute = nextMinute
+            next.minute = nextMinute
         }
 
-        guard let nextDate = calendar.date(from: nextComponents) else {
-            return []
-        }
-
-        return (0..<limit).compactMap { offset in
-            calendar.date(byAdding: .minute, value: offset * intervalMinutes, to: nextDate)
-        }
+        guard let start = calendar.date(from: next) else { return [] }
+        return (0..<64).compactMap { calendar.date(byAdding: .minute, value: $0 * interval, to: start) }
     }
 
-    private func fireBell(isTest: Bool) {
-        if config.suppressWhenPresenting && isLikelyPresenting() {
-            if isTestMode {
-                NSApp.terminate(nil)
-            }
-            return
-        }
+    // MARK: - Notifications
 
+    private func makeContent(body: String) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = config.title
-        content.body = renderBody(isTest: isTest)
-        if let soundName = config.soundName, !soundName.isEmpty {
-            content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: "\(soundName).aiff"))
+        content.body = body
+        if let name = config.soundName, !name.isEmpty {
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: "\(name).aiff"))
         } else {
             content.sound = .default
         }
+        return content
+    }
+
+    private func sendNotification(body: String) {
+        if config.suppressWhenPresenting, isLikelyPresenting() { return }
 
         let request = UNNotificationRequest(
             identifier: "clocktower-\(UUID().uuidString)",
-            content: content,
+            content: makeContent(body: body),
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         )
         UNUserNotificationCenter.current().add(request)
     }
 
-    private func renderBody(for date: Date = Date(), isTest: Bool) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
-        formatter.amSymbol = "am"
-        formatter.pmSymbol = "pm"
-        let timeText = formatter.string(from: date)
-        let body = config.bodyTemplate.replacingOccurrences(of: "{{time}}", with: timeText)
-        return isTest ? "\(body) [test]" : body
+    private func renderBody(for date: Date = Date()) -> String {
+        config.bodyTemplate.replacingOccurrences(of: "{{time}}", with: Self.timeFormatter.string(from: date))
     }
 
     private func isLikelyPresenting() -> Bool {
         guard let frontmost = NSWorkspace.shared.frontmostApplication?.localizedName?.lowercased() else {
             return false
         }
-        let targets = config.presentationApps.map { $0.lowercased() }
-        return targets.contains { frontmost.contains($0) }
+        return config.presentationApps.contains { frontmost.contains($0.lowercased()) }
     }
+
+    // MARK: - UNUserNotificationCenterDelegate
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
@@ -195,8 +176,5 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         completionHandler()
-        Task { @MainActor in
-            NSApp.hide(nil)
-        }
     }
 }

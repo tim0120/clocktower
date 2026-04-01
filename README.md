@@ -1,6 +1,6 @@
 # Clocktower
 
-A small native macOS menu bar app that sends mindfulness reminders at regular intervals.
+A small native macOS menu bar app that sends timed reminders at regular intervals.
 
 ## Features
 
@@ -20,7 +20,7 @@ A small native macOS menu bar app that sends mindfulness reminders at regular in
 ## Install
 
 ```bash
-git clone https://github.com/timkostolansky/clocktower.git
+git clone https://github.com/tim0120/clocktower.git
 cd clocktower
 chmod +x install.sh
 ./install.sh
@@ -91,7 +91,6 @@ Default config:
 ## Notes
 
 - Focus mode exceptions are controlled in **System Settings > Focus** for Clocktower
-- The `--test` flag runs a single test notification and exits after 10 seconds
 
 ## License
 
