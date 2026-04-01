@@ -130,8 +130,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
             title: title.isEmpty ? BellConfig.default.title : title,
             bodyTemplate: body.isEmpty ? BellConfig.default.bodyTemplate : body,
             soundName: sound,
-            suppressWhenPresenting: suppressCheckbox.state == .on,
-            presentationApps: BellConfig.default.presentationApps
+            suppressWhenPresenting: suppressCheckbox.state == .on
         )
 
         configStore.save(config)

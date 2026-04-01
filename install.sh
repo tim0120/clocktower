@@ -47,6 +47,7 @@ codesign --force --deep --sign - "$APP_DIR"
 launchctl bootout "gui/$(id -u)" "$LAUNCH_AGENT_DEST" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENT_DEST"
 pkill -f "$APP_DIR/Contents/MacOS/Clocktower" >/dev/null 2>&1 || true
+sleep 1
 open "$APP_DIR" >/dev/null 2>&1 || true
 
 echo "Installed Clocktower to $APP_DIR"

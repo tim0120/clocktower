@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import UserNotifications
 
 @MainActor
@@ -7,6 +8,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     private let configStore = ConfigStore()
     private var config: BellConfig!
     private var preferencesWindowController: PreferencesWindowController?
+    private nonisolated(unsafe) var lastNonSelfApp: NSRunningApplication?
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -16,6 +18,14 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         return f
     }()
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // If we became active unexpectedly (e.g. user clicked a notification),
+        // immediately return focus to the previous app.
+        if preferencesWindowController == nil {
+            lastNonSelfApp?.activate(options: .activateIgnoringOtherApps)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         config = configStore.load()
         NSApp.setActivationPolicy(.accessory)
@@ -24,6 +34,17 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+            self?.lastNonSelfApp = app
+        }
+        lastNonSelfApp = NSWorkspace.shared.frontmostApplication
 
         scheduleNotifications()
         Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
@@ -144,7 +165,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         let request = UNNotificationRequest(
             identifier: "clocktower-\(UUID().uuidString)",
             content: makeContent(body: body),
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
         )
         UNUserNotificationCenter.current().add(request)
     }
@@ -154,10 +175,33 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     }
 
     private func isLikelyPresenting() -> Bool {
-        guard let frontmost = NSWorkspace.shared.frontmostApplication?.localizedName?.lowercased() else {
+        // Check if any display is mirrored (projector/TV presentation setup)
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 16)
+        var displayCount: UInt32 = 0
+        CGGetActiveDisplayList(16, &displayIDs, &displayCount)
+
+        for i in 0..<Int(displayCount) {
+            if CGDisplayMirrorsDisplay(displayIDs[i]) != kCGNullDirectDisplay { return true }
+        }
+
+        // Check if a presentation app is running a fullscreen window (slideshow mode)
+        let presentationBundles = ["com.apple.iWork.Keynote", "com.microsoft.Powerpoint"]
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
             return false
         }
-        return config.presentationApps.contains { frontmost.contains($0.lowercased()) }
+        let mainBounds = CGDisplayBounds(CGMainDisplayID())
+        for window in windows {
+            guard let ownerPID = window[kCGWindowOwnerPID as String] as? pid_t,
+                  let boundsDict = window[kCGWindowBounds as String] as? [String: CGFloat],
+                  let app = NSRunningApplication(processIdentifier: ownerPID),
+                  let bundleID = app.bundleIdentifier,
+                  presentationBundles.contains(bundleID) else { continue }
+
+            let w = boundsDict["Width"] ?? 0
+            let h = boundsDict["Height"] ?? 0
+            if w >= mainBounds.width && h >= mainBounds.height { return true }
+        }
+        return false
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -175,6 +219,9 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        DispatchQueue.main.async { [weak self] in
+            self?.lastNonSelfApp?.activate(options: .activateIgnoringOtherApps)
+        }
         completionHandler()
     }
 }
