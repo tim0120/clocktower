@@ -11,7 +11,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     private let bodyField = NSTextField()
     private let soundPopUp = NSPopUpButton()
     private let suppressCheckbox = NSButton(checkboxWithTitle: "Suppress when presenting", target: nil, action: nil)
-    private let quietHoursCheckbox = NSButton(checkboxWithTitle: "Turn off during these hours", target: nil, action: nil)
+    private let quietHoursCheckbox = NSButton(checkboxWithTitle: "Pause reminders on a daily schedule", target: nil, action: nil)
     private let quietHoursStartPicker = NSDatePicker()
     private let quietHoursEndPicker = NSDatePicker()
 
@@ -31,7 +31,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         self.onSave = onSave
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -85,8 +85,9 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         stack.addArrangedSubview(row(label: "Sound", control: soundPopUp))
         stack.addArrangedSubview(suppressCheckbox)
         stack.addArrangedSubview(quietHoursCheckbox)
-        stack.addArrangedSubview(row(label: "Off from", control: quietHoursStartPicker))
-        stack.addArrangedSubview(row(label: "Back on", control: quietHoursEndPicker))
+        stack.addArrangedSubview(helpText("When enabled, Clocktower pauses reminders every day during the selected time range."))
+        stack.addArrangedSubview(row(label: "Pause from", control: quietHoursStartPicker))
+        stack.addArrangedSubview(row(label: "Resume at", control: quietHoursEndPicker))
 
         let buttons = NSStackView()
         buttons.orientation = .horizontal
@@ -129,6 +130,13 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
 
         title.widthAnchor.constraint(equalToConstant: 100).isActive = true
         return row
+    }
+
+    private func helpText(_ string: String) -> NSView {
+        let label = NSTextField(wrappingLabelWithString: string)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
     }
 
     @objc private func openConfig() {

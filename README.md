@@ -32,6 +32,12 @@ The install script builds the app, creates `~/Applications/Clocktower.app`, gene
 
 When macOS prompts for notification permissions, allow them for Clocktower.
 
+After install:
+
+1. Open Clocktower from your menu bar.
+2. Open **Preferences** and set your interval, sound, and optional quiet hours.
+3. Use **Send Test Bell** to confirm notifications look right.
+
 ## Uninstall
 
 ```bash
@@ -50,6 +56,13 @@ Configuration is stored at:
 ```
 
 You can edit it directly or use the **Preferences** window from the menu bar icon.
+
+Clocktower stores only local app state:
+
+- `config.json` for settings
+- `clocktower.log` for runtime logs
+- `install.log` for installer runs
+- `clocktower.lock` for single-instance protection
 
 Default config:
 
@@ -97,6 +110,12 @@ Default config:
 - New builds now use a shared lock file in `~/Library/Application Support/Clocktower/clocktower.lock` so only one Clocktower process can run even if multiple app variants exist
 - Runtime logs are written to `~/Library/Application Support/Clocktower/clocktower.log`
 - Installer logs are appended to `~/Library/Application Support/Clocktower/install.log`
+
+## Troubleshooting
+
+- If reminders stop entirely, check that Clocktower is enabled in the menu bar and that your current time is outside quiet hours.
+- If notifications do not appear, confirm Clocktower is allowed in **System Settings > Notifications**.
+- If behavior looks wrong after reinstalling, open **Open Logs** from the menu bar and inspect `clocktower.log`.
 
 ## License
 
