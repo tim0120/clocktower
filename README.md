@@ -6,6 +6,8 @@ A small native macOS menu bar app that sends timed reminders at regular interval
 
 - Lives in the menu bar — no dock icon, no windows in the way
 - Sends local notifications with configurable title, body, sound, and interval
+- Global on/off control from the menu bar and preferences
+- Quiet hours support so reminders stay off during a daily time range
 - Defaults to every 30 minutes with a system sound
 - Body template supports `{{time}}` to include the current time
 - Optional presentation suppression — skip notifications when the frontmost app is Zoom, Teams, Keynote, etc.
@@ -54,15 +56,11 @@ Default config:
 ```json
 {
   "bodyTemplate": "It's {{time}}.",
+  "isEnabled": true,
   "intervalMinutes": 30,
-  "presentationApps": [
-    "Keynote",
-    "Microsoft PowerPoint",
-    "zoom.us",
-    "Microsoft Teams",
-    "Google Chrome",
-    "Safari"
-  ],
+  "quietHoursEnabled": false,
+  "quietHoursEndMinutes": 540,
+  "quietHoursStartMinutes": 1080,
   "soundName": "Tink",
   "suppressWhenPresenting": false,
   "title": "Clocktower"
@@ -71,26 +69,34 @@ Default config:
 
 | Field | Description |
 |-------|-------------|
+| `isEnabled` | Master switch for all reminders |
 | `intervalMinutes` | Minutes between reminders (minimum 1) |
 | `title` | Notification title |
 | `bodyTemplate` | Notification body. `{{time}}` is replaced with the current time |
 | `soundName` | macOS system sound name, or `null` for default |
 | `suppressWhenPresenting` | Skip notifications when a presentation app is the frontmost window |
-| `presentationApps` | App names to check when suppression is enabled |
+| `quietHoursEnabled` | Turns the quiet-hours schedule on or off |
+| `quietHoursStartMinutes` | Minutes after midnight when Clocktower should turn off |
+| `quietHoursEndMinutes` | Minutes after midnight when Clocktower should turn back on |
 
 ## Menu Bar Commands
 
 | Command | Shortcut | Description |
 |---------|----------|-------------|
+| Enable/Disable Clocktower | - | Turn reminders on or off immediately |
 | Preferences | `,` | Open the preferences window |
 | Send Test Bell | `t` | Send a test notification immediately |
 | Open Config | `o` | Open config.json in your default editor |
+| Open Logs | `l` | Open the Clocktower runtime log |
 | Reload Config | `r` | Reload config from disk |
 | Quit | `q` | Quit Clocktower |
 
 ## Notes
 
 - Focus mode exceptions are controlled in **System Settings > Focus** for Clocktower
+- New builds now use a shared lock file in `~/Library/Application Support/Clocktower/clocktower.lock` so only one Clocktower process can run even if multiple app variants exist
+- Runtime logs are written to `~/Library/Application Support/Clocktower/clocktower.log`
+- Installer logs are appended to `~/Library/Application Support/Clocktower/install.log`
 
 ## License
 

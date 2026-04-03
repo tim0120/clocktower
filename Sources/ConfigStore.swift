@@ -3,11 +3,15 @@ import Foundation
 final class ConfigStore {
     private let directoryURL: URL
     let configURL: URL
+    let lockURL: URL
+    let logURL: URL
 
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         self.directoryURL = appSupport.appendingPathComponent("Clocktower", isDirectory: true)
         self.configURL = directoryURL.appendingPathComponent("config.json")
+        self.lockURL = directoryURL.appendingPathComponent("clocktower.lock")
+        self.logURL = directoryURL.appendingPathComponent("clocktower.log")
     }
 
     func load() -> BellConfig {

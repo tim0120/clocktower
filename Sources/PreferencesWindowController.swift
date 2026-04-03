@@ -5,11 +5,15 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     private let configStore: ConfigStore
     private let onSave: (BellConfig) -> Void
 
+    private let enabledCheckbox = NSButton(checkboxWithTitle: "Enable Clocktower", target: nil, action: nil)
     private let intervalField = NSTextField()
     private let titleField = NSTextField()
     private let bodyField = NSTextField()
     private let soundPopUp = NSPopUpButton()
     private let suppressCheckbox = NSButton(checkboxWithTitle: "Suppress when presenting", target: nil, action: nil)
+    private let quietHoursCheckbox = NSButton(checkboxWithTitle: "Turn off during these hours", target: nil, action: nil)
+    private let quietHoursStartPicker = NSDatePicker()
+    private let quietHoursEndPicker = NSDatePicker()
 
     private static let systemSounds: [String] = {
         let soundsDir = "/System/Library/Sounds"
@@ -27,7 +31,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         self.onSave = onSave
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 250),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -45,10 +49,17 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     }
 
     private func buildUI(config: BellConfig) {
+        enabledCheckbox.state = config.isEnabled ? .on : .off
         intervalField.stringValue = String(config.intervalMinutes)
         titleField.stringValue = config.title
         bodyField.stringValue = config.bodyTemplate
         suppressCheckbox.state = config.suppressWhenPresenting ? .on : .off
+        quietHoursCheckbox.state = config.quietHoursEnabled ? .on : .off
+
+        configureTimePicker(quietHoursStartPicker, minutes: config.quietHoursStartMinutes)
+        configureTimePicker(quietHoursEndPicker, minutes: config.quietHoursEndMinutes)
+        quietHoursCheckbox.target = self
+        quietHoursCheckbox.action = #selector(quietHoursToggled)
 
         soundPopUp.addItem(withTitle: "Default")
         for sound in Self.systemSounds {
@@ -67,11 +78,15 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
 
+        stack.addArrangedSubview(enabledCheckbox)
         stack.addArrangedSubview(row(label: "Interval (min)", control: intervalField))
         stack.addArrangedSubview(row(label: "Title", control: titleField))
         stack.addArrangedSubview(row(label: "Body", control: bodyField))
         stack.addArrangedSubview(row(label: "Sound", control: soundPopUp))
         stack.addArrangedSubview(suppressCheckbox)
+        stack.addArrangedSubview(quietHoursCheckbox)
+        stack.addArrangedSubview(row(label: "Off from", control: quietHoursStartPicker))
+        stack.addArrangedSubview(row(label: "Back on", control: quietHoursEndPicker))
 
         let buttons = NSStackView()
         buttons.orientation = .horizontal
@@ -96,6 +111,8 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -20)
         ])
+
+        updateQuietHoursControls()
     }
 
     private func row(label: String, control: NSControl) -> NSView {
@@ -115,7 +132,12 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     }
 
     @objc private func openConfig() {
+        logAsync("preferences open-json")
         NSWorkspace.shared.open(configStore.configURL)
+    }
+
+    @objc private func quietHoursToggled() {
+        updateQuietHoursControls()
     }
 
     @objc private func save() {
@@ -126,14 +148,21 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         let sound: String? = selectedIndex > 0 ? soundPopUp.titleOfSelectedItem : nil
 
         let config = BellConfig(
+            isEnabled: enabledCheckbox.state == .on,
             intervalMinutes: interval,
             title: title.isEmpty ? BellConfig.default.title : title,
             bodyTemplate: body.isEmpty ? BellConfig.default.bodyTemplate : body,
             soundName: sound,
-            suppressWhenPresenting: suppressCheckbox.state == .on
+            suppressWhenPresenting: suppressCheckbox.state == .on,
+            quietHoursEnabled: quietHoursCheckbox.state == .on,
+            quietHoursStartMinutes: timePickerMinutes(quietHoursStartPicker),
+            quietHoursEndMinutes: timePickerMinutes(quietHoursEndPicker)
         )
 
         configStore.save(config)
+        logAsync(
+            "preferences save isEnabled=\(config.isEnabled) intervalMinutes=\(config.intervalMinutes) quietHoursEnabled=\(config.quietHoursEnabled) quietStart=\(config.quietHoursStartMinutes) quietEnd=\(config.quietHoursEndMinutes)"
+        )
         onSave(config)
         window?.close()
     }
@@ -150,5 +179,32 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         previewSound?.stop()
         previewSound = nil
+    }
+
+    private func configureTimePicker(_ picker: NSDatePicker, minutes: Int) {
+        picker.datePickerElements = .hourMinute
+        picker.datePickerStyle = .textFieldAndStepper
+        picker.dateValue = date(fromMinutes: minutes)
+        picker.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    private func updateQuietHoursControls() {
+        let enabled = quietHoursCheckbox.state == .on
+        quietHoursStartPicker.isEnabled = enabled
+        quietHoursEndPicker.isEnabled = enabled
+        quietHoursStartPicker.alphaValue = enabled ? 1.0 : 0.5
+        quietHoursEndPicker.alphaValue = enabled ? 1.0 : 0.5
+    }
+
+    private func date(fromMinutes minutes: Int) -> Date {
+        let normalized = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60)
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: Date())
+        return calendar.date(byAdding: .minute, value: normalized, to: startOfDay) ?? Date()
+    }
+
+    private func timePickerMinutes(_ picker: NSDatePicker) -> Int {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: picker.dateValue)
+        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 }
