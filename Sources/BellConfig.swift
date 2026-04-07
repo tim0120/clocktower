@@ -10,6 +10,10 @@ struct BellConfig: Codable {
     var quietHoursEnabled: Bool
     var quietHoursStartMinutes: Int
     var quietHoursEndMinutes: Int
+    var awayCatchUpEnabled: Bool
+    var awayCatchUpStartMinutes: Int
+    var awayCatchUpEndMinutes: Int
+    var awayCatchUpWeekdays: [Int]
 
     static let `default` = BellConfig(
         isEnabled: true,
@@ -20,7 +24,11 @@ struct BellConfig: Codable {
         suppressWhenPresenting: false,
         quietHoursEnabled: false,
         quietHoursStartMinutes: 18 * 60,
-        quietHoursEndMinutes: 9 * 60
+        quietHoursEndMinutes: 9 * 60,
+        awayCatchUpEnabled: false,
+        awayCatchUpStartMinutes: 9 * 60,
+        awayCatchUpEndMinutes: 19 * 60,
+        awayCatchUpWeekdays: [2, 3, 4, 5, 6]
     )
 
     private enum CodingKeys: String, CodingKey {
@@ -33,6 +41,10 @@ struct BellConfig: Codable {
         case quietHoursEnabled
         case quietHoursStartMinutes
         case quietHoursEndMinutes
+        case awayCatchUpEnabled
+        case awayCatchUpStartMinutes
+        case awayCatchUpEndMinutes
+        case awayCatchUpWeekdays
     }
 
     init(
@@ -44,7 +56,11 @@ struct BellConfig: Codable {
         suppressWhenPresenting: Bool,
         quietHoursEnabled: Bool,
         quietHoursStartMinutes: Int,
-        quietHoursEndMinutes: Int
+        quietHoursEndMinutes: Int,
+        awayCatchUpEnabled: Bool,
+        awayCatchUpStartMinutes: Int,
+        awayCatchUpEndMinutes: Int,
+        awayCatchUpWeekdays: [Int]
     ) {
         self.isEnabled = isEnabled
         self.intervalMinutes = intervalMinutes
@@ -55,6 +71,10 @@ struct BellConfig: Codable {
         self.quietHoursEnabled = quietHoursEnabled
         self.quietHoursStartMinutes = quietHoursStartMinutes
         self.quietHoursEndMinutes = quietHoursEndMinutes
+        self.awayCatchUpEnabled = awayCatchUpEnabled
+        self.awayCatchUpStartMinutes = awayCatchUpStartMinutes
+        self.awayCatchUpEndMinutes = awayCatchUpEndMinutes
+        self.awayCatchUpWeekdays = Self.normalizedWeekdays(awayCatchUpWeekdays)
     }
 
     init(from decoder: Decoder) throws {
@@ -69,5 +89,15 @@ struct BellConfig: Codable {
         quietHoursEnabled = try container.decodeIfPresent(Bool.self, forKey: .quietHoursEnabled) ?? Self.default.quietHoursEnabled
         quietHoursStartMinutes = try container.decodeIfPresent(Int.self, forKey: .quietHoursStartMinutes) ?? Self.default.quietHoursStartMinutes
         quietHoursEndMinutes = try container.decodeIfPresent(Int.self, forKey: .quietHoursEndMinutes) ?? Self.default.quietHoursEndMinutes
+        awayCatchUpEnabled = try container.decodeIfPresent(Bool.self, forKey: .awayCatchUpEnabled) ?? Self.default.awayCatchUpEnabled
+        awayCatchUpStartMinutes = try container.decodeIfPresent(Int.self, forKey: .awayCatchUpStartMinutes) ?? Self.default.awayCatchUpStartMinutes
+        awayCatchUpEndMinutes = try container.decodeIfPresent(Int.self, forKey: .awayCatchUpEndMinutes) ?? Self.default.awayCatchUpEndMinutes
+        awayCatchUpWeekdays = Self.normalizedWeekdays(
+            try container.decodeIfPresent([Int].self, forKey: .awayCatchUpWeekdays) ?? Self.default.awayCatchUpWeekdays
+        )
+    }
+
+    private static func normalizedWeekdays(_ weekdays: [Int]) -> [Int] {
+        Array(Set(weekdays.filter { (1...7).contains($0) })).sorted()
     }
 }

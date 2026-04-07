@@ -57,10 +57,13 @@ cat > "$LAUNCH_AGENT_DEST" <<PLIST
     <string>$BUNDLE_ID</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/open</string>
-        <string>-gj</string>
-        <string>$APP_DIR</string>
+        <string>$APP_DIR/Contents/MacOS/Clocktower</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -78,7 +81,7 @@ sleep 1
 log "reloading launch agent $LAUNCH_AGENT_DEST"
 launchctl bootout "gui/$(id -u)" "$LAUNCH_AGENT_DEST" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENT_DEST"
-open "$APP_DIR" >/dev/null 2>&1 || true
+launchctl kickstart -k "gui/$(id -u)/$BUNDLE_ID" >/dev/null 2>&1 || true
 
 log "install complete app=$APP_DIR"
 echo "Installed Clocktower to $APP_DIR"

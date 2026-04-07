@@ -9,6 +9,9 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     private var config: BellConfig!
     private var preferencesWindowController: PreferencesWindowController?
     private var enabledMenuItem: NSMenuItem?
+    private var isScreenLocked = false
+    private var isScreenAsleep = false
+    private var awaySessionStart: Date?
     private nonisolated(unsafe) var lastNonSelfApp: NSRunningApplication?
 
     private static let timeFormatter: DateFormatter = {
@@ -18,6 +21,10 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         f.pmSymbol = "pm"
         return f
     }()
+
+    private var isCurrentlyAway: Bool {
+        isScreenLocked || isScreenAsleep
+    }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         // If we became active unexpectedly (e.g. user clicked a notification),
@@ -29,7 +36,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         config = configStore.load()
-        logAsync("app did-finish-launching enabled=\(config.isEnabled) intervalMinutes=\(config.intervalMinutes) quietHoursEnabled=\(config.quietHoursEnabled)")
+        logAsync("app did-finish-launching enabled=\(config.isEnabled) intervalMinutes=\(config.intervalMinutes) quietHoursEnabled=\(config.quietHoursEnabled) awayCatchUpEnabled=\(config.awayCatchUpEnabled)")
         NSApp.setActivationPolicy(.accessory)
         configureStatusItem()
 
@@ -53,6 +60,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
             self?.lastNonSelfApp = app
         }
         lastNonSelfApp = NSWorkspace.shared.frontmostApplication
+        configureAwayObservers()
 
         scheduleNotifications()
         Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
@@ -83,6 +91,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         menu.addItem(NSMenuItem(title: "Send Test Bell", action: #selector(sendTestBell), keyEquivalent: "t"))
         menu.addItem(NSMenuItem(title: "Open Config", action: #selector(openConfig), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "Open Logs", action: #selector(openLogs), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem(title: "Clear Notifications", action: #selector(clearNotificationsFromMenu), keyEquivalent: "k"))
         menu.addItem(NSMenuItem(title: "Reload Config", action: #selector(reloadConfig), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
@@ -135,6 +144,10 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         refreshStatusUI()
     }
 
+    @objc private func clearNotificationsFromMenu() {
+        clearNotifications(reason: "menu")
+    }
+
     @objc private func toggleEnabled() {
         config.isEnabled.toggle()
         configStore.save(config)
@@ -152,11 +165,13 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
 
     private func scheduleNotifications() {
         let center = UNUserNotificationCenter.current()
-        center.removeAllPendingNotificationRequests()
-        center.removeAllDeliveredNotifications()
-        logAsync("schedule clearing pending notifications")
+        clearNotifications(reason: "schedule")
         guard config.isEnabled else {
             logAsync("schedule skipped because Clocktower is disabled")
+            return
+        }
+        guard !isCurrentlyAway else {
+            logAsync("schedule skipped because user is away")
             return
         }
 
@@ -181,9 +196,16 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     }
 
     private func nextTriggerDates() -> [Date] {
+        guard let start = firstTriggerDate(after: Date()) else { return [] }
         let interval = max(1, config.intervalMinutes)
         let calendar = Calendar.current
-        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: Date())
+        return (0..<64).compactMap { calendar.date(byAdding: .minute, value: $0 * interval, to: start) }
+    }
+
+    private func firstTriggerDate(after date: Date) -> Date? {
+        let interval = max(1, config.intervalMinutes)
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         let minute = components.minute ?? 0
 
         var next = components
@@ -196,8 +218,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
             next.minute = nextMinute
         }
 
-        guard let start = calendar.date(from: next) else { return [] }
-        return (0..<64).compactMap { calendar.date(byAdding: .minute, value: $0 * interval, to: start) }
+        return calendar.date(from: next)
     }
 
     // MARK: - Notifications
@@ -214,9 +235,9 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         return content
     }
 
-    private func sendNotification(body: String) {
-        guard config.isEnabled, shouldNotify(at: Date(), context: "immediate") else {
-            logAsync("notification immediate skipped")
+    private func sendNotification(body: String, context: String = "immediate") {
+        guard config.isEnabled, shouldNotify(at: Date(), context: context) else {
+            logAsync("notification \(context) skipped")
             return
         }
 
@@ -227,9 +248,9 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         )
         UNUserNotificationCenter.current().add(request) { error in
             if let error {
-                logAsync("notification immediate add-error \(error.localizedDescription)")
+                logAsync("notification \(context) add-error \(error.localizedDescription)")
             } else {
-                logAsync("notification immediate queued")
+                logAsync("notification \(context) queued")
             }
         }
     }
@@ -238,23 +259,39 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         config.bodyTemplate.replacingOccurrences(of: "{{time}}", with: Self.timeFormatter.string(from: date))
     }
 
+    private func clearNotifications(reason: String) {
+        let center = UNUserNotificationCenter.current()
+        center.removeAllPendingNotificationRequests()
+        center.removeAllDeliveredNotifications()
+        logAsync("notifications cleared reason=\(reason)")
+    }
+
     private func shouldNotify(at date: Date, context: String) -> Bool {
-        if !config.isEnabled {
-            logAsync("notify blocked context=\(context) reason=disabled at=\(date.ISO8601Format())")
+        if let reason = notificationBlockReason(at: date, respectAwayState: true) {
+            logAsync("notify blocked context=\(context) reason=\(reason) at=\(date.ISO8601Format())")
             return false
+        }
+        return true
+    }
+
+    private func notificationBlockReason(at date: Date, respectAwayState: Bool) -> String? {
+        if !config.isEnabled {
+            return "disabled"
+        }
+
+        if respectAwayState, isCurrentlyAway {
+            return "away"
         }
 
         if config.quietHoursEnabled, isWithinQuietHours(date) {
-            logAsync("notify blocked context=\(context) reason=quiet-hours at=\(date.ISO8601Format())")
-            return false
+            return "quiet-hours"
         }
 
         if config.suppressWhenPresenting, date.timeIntervalSinceNow < 60, isLikelyPresenting() {
-            logAsync("notify blocked context=\(context) reason=presenting at=\(date.ISO8601Format())")
-            return false
+            return "presenting"
         }
 
-        return true
+        return nil
     }
 
     private func isWithinQuietHours(_ date: Date) -> Bool {
@@ -279,6 +316,154 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         let dayMinutes = 24 * 60
         let value = minutes % dayMinutes
         return value >= 0 ? value : value + dayMinutes
+    }
+
+    private func configureAwayObservers() {
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        workspaceCenter.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateAwayState(isAsleep: true, trigger: "screens-sleep")
+            }
+        }
+        workspaceCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateAwayState(isAsleep: false, trigger: "screens-wake")
+            }
+        }
+
+        let distributedCenter = DistributedNotificationCenter.default()
+        distributedCenter.addObserver(
+            forName: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateAwayState(isLocked: true, trigger: "screen-locked")
+            }
+        }
+        distributedCenter.addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateAwayState(isLocked: false, trigger: "screen-unlocked")
+            }
+        }
+    }
+
+    private func updateAwayState(isLocked: Bool? = nil, isAsleep: Bool? = nil, trigger: String) {
+        let wasAway = isCurrentlyAway
+
+        if let isLocked {
+            isScreenLocked = isLocked
+        }
+        if let isAsleep {
+            isScreenAsleep = isAsleep
+        }
+
+        let nowAway = isCurrentlyAway
+        logAsync("away state trigger=\(trigger) locked=\(isScreenLocked) asleep=\(isScreenAsleep) away=\(nowAway)")
+
+        if !wasAway, nowAway {
+            awaySessionStart = Date()
+            clearNotifications(reason: "away-start")
+            return
+        }
+
+        if wasAway, !nowAway {
+            let returnTime = Date()
+            let awayStart = awaySessionStart ?? returnTime
+            awaySessionStart = nil
+            logAsync("away ended trigger=\(trigger) durationSeconds=\(Int(returnTime.timeIntervalSince(awayStart)))")
+            scheduleNotifications()
+            sendAwayCatchUpSummaryIfNeeded(from: awayStart, to: returnTime)
+        }
+    }
+
+    private func sendAwayCatchUpSummaryIfNeeded(from start: Date, to end: Date) {
+        guard config.awayCatchUpEnabled else {
+            logAsync("away summary skipped reason=feature-disabled")
+            return
+        }
+        guard isWithinAwayCatchUpWindow(end) else {
+            logAsync("away summary skipped reason=outside-return-window")
+            return
+        }
+
+        let missedDates = missedTriggerDates(from: start, to: end)
+        guard let first = missedDates.first, let last = missedDates.last else {
+            logAsync("away summary skipped reason=no-missed-intervals")
+            return
+        }
+
+        let body: String
+        if missedDates.count == 1 {
+            body = "1 interval passed while you were away (\(Self.timeFormatter.string(from: first)))"
+        } else {
+            body = "\(missedDates.count) intervals passed while you were away (\(Self.timeFormatter.string(from: first)) to \(Self.timeFormatter.string(from: last)))"
+        }
+
+        logAsync("away summary queued count=\(missedDates.count) first=\(first.ISO8601Format()) last=\(last.ISO8601Format())")
+        sendNotification(body: body, context: "away-summary")
+    }
+
+    private func missedTriggerDates(from start: Date, to end: Date) -> [Date] {
+        guard start < end, let first = firstTriggerDate(after: start) else { return [] }
+
+        let interval = max(1, config.intervalMinutes)
+        let calendar = Calendar.current
+        var dates: [Date] = []
+        var current = first
+
+        while current < end {
+            if shouldCountAwayMissedInterval(at: current) {
+                dates.append(current)
+            }
+
+            guard let next = calendar.date(byAdding: .minute, value: interval, to: current) else { break }
+            current = next
+        }
+
+        return dates
+    }
+
+    private func shouldCountAwayMissedInterval(at date: Date) -> Bool {
+        guard config.awayCatchUpEnabled else { return false }
+        guard isWithinAwayCatchUpWindow(date) else { return false }
+        return notificationBlockReason(at: date, respectAwayState: false) == nil
+    }
+
+    private func isWithinAwayCatchUpWindow(_ date: Date) -> Bool {
+        let weekday = Calendar.current.component(.weekday, from: date)
+        guard config.awayCatchUpWeekdays.contains(weekday) else { return false }
+
+        let currentMinutes = minutesSinceMidnight(for: date)
+        let start = normalizedMinutes(config.awayCatchUpStartMinutes)
+        let end = normalizedMinutes(config.awayCatchUpEndMinutes)
+
+        if start == end {
+            return true
+        }
+
+        if start < end {
+            return currentMinutes >= start && currentMinutes < end
+        }
+
+        return currentMinutes >= start || currentMinutes < end
+    }
+
+    private func minutesSinceMidnight(for date: Date) -> Int {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 
     private func refreshStatusUI() {

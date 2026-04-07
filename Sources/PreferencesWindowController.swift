@@ -14,6 +14,18 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     private let quietHoursCheckbox = NSButton(checkboxWithTitle: "Pause reminders on a daily schedule", target: nil, action: nil)
     private let quietHoursStartPicker = NSDatePicker()
     private let quietHoursEndPicker = NSDatePicker()
+    private let awayCatchUpCheckbox = NSButton(checkboxWithTitle: "Summarize missed reminders when I return", target: nil, action: nil)
+    private let awayCatchUpStartPicker = NSDatePicker()
+    private let awayCatchUpEndPicker = NSDatePicker()
+    private let awayCatchUpWeekdayButtons: [(value: Int, button: NSButton)] = [
+        (2, NSButton(checkboxWithTitle: "Mon", target: nil, action: nil)),
+        (3, NSButton(checkboxWithTitle: "Tue", target: nil, action: nil)),
+        (4, NSButton(checkboxWithTitle: "Wed", target: nil, action: nil)),
+        (5, NSButton(checkboxWithTitle: "Thu", target: nil, action: nil)),
+        (6, NSButton(checkboxWithTitle: "Fri", target: nil, action: nil)),
+        (7, NSButton(checkboxWithTitle: "Sat", target: nil, action: nil)),
+        (1, NSButton(checkboxWithTitle: "Sun", target: nil, action: nil))
+    ]
 
     private static let systemSounds: [String] = {
         let soundsDir = "/System/Library/Sounds"
@@ -31,7 +43,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         self.onSave = onSave
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -55,11 +67,21 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         bodyField.stringValue = config.bodyTemplate
         suppressCheckbox.state = config.suppressWhenPresenting ? .on : .off
         quietHoursCheckbox.state = config.quietHoursEnabled ? .on : .off
+        awayCatchUpCheckbox.state = config.awayCatchUpEnabled ? .on : .off
 
         configureTimePicker(quietHoursStartPicker, minutes: config.quietHoursStartMinutes)
         configureTimePicker(quietHoursEndPicker, minutes: config.quietHoursEndMinutes)
+        configureTimePicker(awayCatchUpStartPicker, minutes: config.awayCatchUpStartMinutes)
+        configureTimePicker(awayCatchUpEndPicker, minutes: config.awayCatchUpEndMinutes)
         quietHoursCheckbox.target = self
         quietHoursCheckbox.action = #selector(quietHoursToggled)
+        awayCatchUpCheckbox.target = self
+        awayCatchUpCheckbox.action = #selector(awayCatchUpToggled)
+
+        for weekdayButton in awayCatchUpWeekdayButtons {
+            weekdayButton.button.state = config.awayCatchUpWeekdays.contains(weekdayButton.value) ? .on : .off
+            weekdayButton.button.font = .systemFont(ofSize: 11)
+        }
 
         soundPopUp.addItem(withTitle: "Default")
         for sound in Self.systemSounds {
@@ -73,26 +95,69 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         }
         soundPopUp.menu?.delegate = self
 
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        let formStack = NSStackView()
+        formStack.orientation = .vertical
+        formStack.alignment = .leading
+        formStack.spacing = 20
+        formStack.translatesAutoresizingMaskIntoConstraints = false
 
-        stack.addArrangedSubview(enabledCheckbox)
-        stack.addArrangedSubview(row(label: "Interval (min)", control: intervalField))
-        stack.addArrangedSubview(row(label: "Title", control: titleField))
-        stack.addArrangedSubview(row(label: "Body", control: bodyField))
-        stack.addArrangedSubview(row(label: "Sound", control: soundPopUp))
-        stack.addArrangedSubview(suppressCheckbox)
-        stack.addArrangedSubview(quietHoursCheckbox)
-        stack.addArrangedSubview(helpText("When enabled, Clocktower pauses reminders every day during the selected time range."))
-        stack.addArrangedSubview(row(label: "Pause from", control: quietHoursStartPicker))
-        stack.addArrangedSubview(row(label: "Resume at", control: quietHoursEndPicker))
+        let generalSection = section(
+            title: "General",
+            detail: "Basic reminder settings for when Clocktower is actively running.",
+            views: [
+                enabledCheckbox,
+                row(label: "Interval (min)", control: intervalField),
+                row(label: "Title", control: titleField),
+                row(label: "Body", control: bodyField),
+                row(label: "Sound", control: soundPopUp),
+                suppressCheckbox
+            ]
+        )
+
+        let quietHoursSection = section(
+            title: "Quiet Hours",
+            detail: "Clocktower is fully off during this time. Nothing is shown later.",
+            views: [
+                quietHoursCheckbox,
+                row(label: "Quiet from", control: quietHoursStartPicker),
+                row(label: "Resume at", control: quietHoursEndPicker)
+            ]
+        )
+
+        let awayCatchUpSection = section(
+            title: "Away Catch-Up",
+            detail: "During the selected work window, Clocktower suppresses live reminders while your Mac is locked or asleep and shows one summary when you return. Outside that window, missed reminders are skipped instead of stacking up.",
+            views: [
+                awayCatchUpCheckbox,
+                row(label: "Work days", control: weekdaySelectionView()),
+                row(label: "Work from", control: awayCatchUpStartPicker),
+                row(label: "Work until", control: awayCatchUpEndPicker)
+            ]
+        )
+
+        formStack.addArrangedSubview(generalSection)
+        formStack.addArrangedSubview(separator())
+        formStack.addArrangedSubview(quietHoursSection)
+        formStack.addArrangedSubview(separator())
+        formStack.addArrangedSubview(awayCatchUpSection)
+
+        let documentView = NSView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(formStack)
+
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = documentView
 
         let buttons = NSStackView()
         buttons.orientation = .horizontal
         buttons.spacing = 8
         buttons.alignment = .centerY
+        buttons.translatesAutoresizingMaskIntoConstraints = false
 
         let openConfigButton = NSButton(title: "Open JSON", target: self, action: #selector(openConfig))
         let saveButton = NSButton(title: "Save", target: self, action: #selector(save))
@@ -100,25 +165,38 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         buttons.addArrangedSubview(openConfigButton)
         buttons.addArrangedSubview(NSView())
         buttons.addArrangedSubview(saveButton)
-        stack.addArrangedSubview(buttons)
 
         let contentView = NSView()
-        contentView.addSubview(stack)
+        contentView.addSubview(scrollView)
+        contentView.addSubview(buttons)
         window?.contentView = contentView
 
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -20)
+            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -16),
+
+            buttons.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            buttons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            buttons.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
+
+            formStack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            formStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            formStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            formStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            formStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
         ])
 
         updateQuietHoursControls()
+        updateAwayCatchUpControls()
     }
 
-    private func row(label: String, control: NSControl) -> NSView {
+    private func row(label: String, control: NSView) -> NSView {
         let title = NSTextField(labelWithString: label)
-        title.alignment = .right
+        title.alignment = .left
         title.font = .systemFont(ofSize: 12, weight: .medium)
         title.translatesAutoresizingMaskIntoConstraints = false
         control.translatesAutoresizingMaskIntoConstraints = false
@@ -126,10 +204,29 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         let row = NSStackView(views: [title, control])
         row.orientation = .horizontal
         row.spacing = 12
-        row.alignment = .firstBaseline
+        row.alignment = .centerY
 
-        title.widthAnchor.constraint(equalToConstant: 100).isActive = true
+        title.widthAnchor.constraint(equalToConstant: 110).isActive = true
         return row
+    }
+
+    private func section(title: String, detail: String, views: [NSView]) -> NSView {
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        let detailLabel = helpText(detail)
+
+        let contentStack = NSStackView(views: views)
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 10
+
+        let sectionStack = NSStackView(views: [titleLabel, detailLabel, contentStack])
+        sectionStack.orientation = .vertical
+        sectionStack.alignment = .leading
+        sectionStack.spacing = 8
+        sectionStack.translatesAutoresizingMaskIntoConstraints = false
+        return sectionStack
     }
 
     private func helpText(_ string: String) -> NSView {
@@ -137,6 +234,21 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
         return label
+    }
+
+    private func weekdaySelectionView() -> NSView {
+        let stack = NSStackView(views: awayCatchUpWeekdayButtons.map(\.button))
+        stack.orientation = .horizontal
+        stack.spacing = 8
+        stack.alignment = .centerY
+        stack.distribution = .fillEqually
+        return stack
+    }
+
+    private func separator() -> NSView {
+        let box = NSBox()
+        box.boxType = .separator
+        return box
     }
 
     @objc private func openConfig() {
@@ -148,12 +260,17 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         updateQuietHoursControls()
     }
 
+    @objc private func awayCatchUpToggled() {
+        updateAwayCatchUpControls()
+    }
+
     @objc private func save() {
         let interval = max(1, Int(intervalField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 30)
         let title = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = bodyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedIndex = soundPopUp.indexOfSelectedItem
         let sound: String? = selectedIndex > 0 ? soundPopUp.titleOfSelectedItem : nil
+        let awayCatchUpWeekdays = selectedAwayCatchUpWeekdays()
 
         let config = BellConfig(
             isEnabled: enabledCheckbox.state == .on,
@@ -164,12 +281,16 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
             suppressWhenPresenting: suppressCheckbox.state == .on,
             quietHoursEnabled: quietHoursCheckbox.state == .on,
             quietHoursStartMinutes: timePickerMinutes(quietHoursStartPicker),
-            quietHoursEndMinutes: timePickerMinutes(quietHoursEndPicker)
+            quietHoursEndMinutes: timePickerMinutes(quietHoursEndPicker),
+            awayCatchUpEnabled: awayCatchUpCheckbox.state == .on,
+            awayCatchUpStartMinutes: timePickerMinutes(awayCatchUpStartPicker),
+            awayCatchUpEndMinutes: timePickerMinutes(awayCatchUpEndPicker),
+            awayCatchUpWeekdays: awayCatchUpWeekdays.isEmpty ? BellConfig.default.awayCatchUpWeekdays : awayCatchUpWeekdays
         )
 
         configStore.save(config)
         logAsync(
-            "preferences save isEnabled=\(config.isEnabled) intervalMinutes=\(config.intervalMinutes) quietHoursEnabled=\(config.quietHoursEnabled) quietStart=\(config.quietHoursStartMinutes) quietEnd=\(config.quietHoursEndMinutes)"
+            "preferences save isEnabled=\(config.isEnabled) intervalMinutes=\(config.intervalMinutes) quietHoursEnabled=\(config.quietHoursEnabled) quietStart=\(config.quietHoursStartMinutes) quietEnd=\(config.quietHoursEndMinutes) awayCatchUpEnabled=\(config.awayCatchUpEnabled) awayStart=\(config.awayCatchUpStartMinutes) awayEnd=\(config.awayCatchUpEndMinutes) awayWeekdays=\(config.awayCatchUpWeekdays)"
         )
         onSave(config)
         window?.close()
@@ -204,6 +325,19 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         quietHoursEndPicker.alphaValue = enabled ? 1.0 : 0.5
     }
 
+    private func updateAwayCatchUpControls() {
+        let enabled = awayCatchUpCheckbox.state == .on
+        awayCatchUpStartPicker.isEnabled = enabled
+        awayCatchUpEndPicker.isEnabled = enabled
+        awayCatchUpStartPicker.alphaValue = enabled ? 1.0 : 0.5
+        awayCatchUpEndPicker.alphaValue = enabled ? 1.0 : 0.5
+
+        for weekdayButton in awayCatchUpWeekdayButtons {
+            weekdayButton.button.isEnabled = enabled
+            weekdayButton.button.alphaValue = enabled ? 1.0 : 0.5
+        }
+    }
+
     private func date(fromMinutes minutes: Int) -> Date {
         let normalized = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60)
         let calendar = Calendar.current
@@ -214,5 +348,12 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     private func timePickerMinutes(_ picker: NSDatePicker) -> Int {
         let components = Calendar.current.dateComponents([.hour, .minute], from: picker.dateValue)
         return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+    }
+
+    private func selectedAwayCatchUpWeekdays() -> [Int] {
+        awayCatchUpWeekdayButtons
+            .filter { $0.button.state == .on }
+            .map(\.value)
+            .sorted()
     }
 }

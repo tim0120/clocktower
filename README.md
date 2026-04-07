@@ -8,6 +8,7 @@ A small native macOS menu bar app that sends timed reminders at regular interval
 - Sends local notifications with configurable title, body, sound, and interval
 - Global on/off control from the menu bar and preferences
 - Quiet hours support so reminders stay off during a daily time range
+- Optional weekday work-window catch-up summaries when you return to your Mac
 - Defaults to every 30 minutes with a system sound
 - Body template supports `{{time}}` to include the current time
 - Optional presentation suppression — skip notifications when the frontmost app is Zoom, Teams, Keynote, etc.
@@ -68,6 +69,16 @@ Default config:
 
 ```json
 {
+  "awayCatchUpEnabled": false,
+  "awayCatchUpEndMinutes": 1140,
+  "awayCatchUpStartMinutes": 540,
+  "awayCatchUpWeekdays": [
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
   "bodyTemplate": "It's {{time}}.",
   "isEnabled": true,
   "intervalMinutes": 30,
@@ -91,6 +102,10 @@ Default config:
 | `quietHoursEnabled` | Turns the quiet-hours schedule on or off |
 | `quietHoursStartMinutes` | Minutes after midnight when Clocktower should turn off |
 | `quietHoursEndMinutes` | Minutes after midnight when Clocktower should turn back on |
+| `awayCatchUpEnabled` | When enabled, summarize missed reminders after you return during the selected work window |
+| `awayCatchUpStartMinutes` | Minutes after midnight when away catch-up becomes active |
+| `awayCatchUpEndMinutes` | Minutes after midnight when away catch-up stops |
+| `awayCatchUpWeekdays` | Calendar weekdays where away catch-up is active (`1 = Sunday`, `7 = Saturday`) |
 
 ## Menu Bar Commands
 
@@ -101,6 +116,7 @@ Default config:
 | Send Test Bell | `t` | Send a test notification immediately |
 | Open Config | `o` | Open config.json in your default editor |
 | Open Logs | `l` | Open the Clocktower runtime log |
+| Clear Notifications | `k` | Remove pending and delivered Clocktower notifications |
 | Reload Config | `r` | Reload config from disk |
 | Quit | `q` | Quit Clocktower |
 
