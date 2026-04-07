@@ -49,6 +49,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
             defer: false
         )
         window.title = "Clocktower Preferences"
+        window.minSize = NSSize(width: 620, height: 400)
         window.center()
         super.init(window: window)
 
@@ -182,7 +183,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
             buttons.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
 
             formStack.topAnchor.constraint(equalTo: documentView.topAnchor),
-            formStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            formStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 4),
             formStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
             formStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
             formStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
@@ -226,6 +227,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         sectionStack.alignment = .leading
         sectionStack.spacing = 8
         sectionStack.translatesAutoresizingMaskIntoConstraints = false
+
         return sectionStack
     }
 
@@ -233,6 +235,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         let label = NSTextField(wrappingLabelWithString: string)
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }
 

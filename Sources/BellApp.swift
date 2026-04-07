@@ -374,7 +374,8 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         logAsync("away state trigger=\(trigger) locked=\(isScreenLocked) asleep=\(isScreenAsleep) away=\(nowAway)")
 
         if !wasAway, nowAway {
-            awaySessionStart = Date()
+            let idleSeconds = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null)
+            awaySessionStart = Date().addingTimeInterval(-idleSeconds)
             clearNotifications(reason: "away-start")
             return
         }
@@ -400,19 +401,26 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         }
 
         let missedDates = missedTriggerDates(from: start, to: end)
-        guard let first = missedDates.first, let last = missedDates.last else {
+        guard let _ = missedDates.first else {
             logAsync("away summary skipped reason=no-missed-intervals")
             return
         }
 
-        let body: String
-        if missedDates.count == 1 {
-            body = "1 interval passed while you were away (\(Self.timeFormatter.string(from: first)))"
+        let awaySeconds = Int(end.timeIntervalSince(start))
+        let hours = awaySeconds / 3600
+        let minutes = (awaySeconds % 3600) / 60
+        let duration: String
+        if hours > 0, minutes > 0 {
+            duration = "\(hours)h \(minutes)m"
+        } else if hours > 0 {
+            duration = "\(hours)h"
         } else {
-            body = "\(missedDates.count) intervals passed while you were away (\(Self.timeFormatter.string(from: first)) to \(Self.timeFormatter.string(from: last)))"
+            duration = "\(minutes)m"
         }
+        let timeRange = "\(Self.timeFormatter.string(from: start)) – \(Self.timeFormatter.string(from: end))"
+        let body = "Away \(duration) (\(timeRange))"
 
-        logAsync("away summary queued count=\(missedDates.count) first=\(first.ISO8601Format()) last=\(last.ISO8601Format())")
+        logAsync("away summary queued duration=\(duration) from=\(start.ISO8601Format()) to=\(end.ISO8601Format())")
         sendNotification(body: body, context: "away-summary")
     }
 
