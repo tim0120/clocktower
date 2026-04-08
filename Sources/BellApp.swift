@@ -374,7 +374,11 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         logAsync("away state trigger=\(trigger) locked=\(isScreenLocked) asleep=\(isScreenAsleep) away=\(nowAway)")
 
         if !wasAway, nowAway {
-            let idleSeconds = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .null)
+            let idleSeconds = min(
+                CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .mouseMoved),
+                CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .leftMouseDown),
+                CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
+            )
             awaySessionStart = Date().addingTimeInterval(-idleSeconds)
             clearNotifications(reason: "away-start")
             return
