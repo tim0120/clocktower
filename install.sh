@@ -7,8 +7,7 @@ APP_DIR="$HOME/Applications/Clocktower.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 APP_SUPPORT_DIR="$HOME/Library/Application Support/Clocktower"
-BUNDLE_ID="com.clocktower.app"
-LAUNCH_AGENT_DEST="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
+BUNDLE_ID="com.tim0120.clocktower"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 ICONSET_DIR="$ROOT_DIR/.build/Clocktower.iconset"
@@ -36,41 +35,15 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BUILD_DIR/Clocktower" "$MACOS_DIR/Clocktower"
 cp "$ROOT_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT_DIR/.build/AppIcon.icns" "$ICON_PATH"
-mkdir -p "$LAUNCH_AGENTS_DIR"
-
 for plist in "$LAUNCH_AGENTS_DIR"/*.plist(N); do
     [[ -f "$plist" ]] || continue
 
-    if /usr/bin/plutil -extract ProgramArguments raw -o - "$plist" 2>/dev/null | /usr/bin/grep -qi "Clocktower.app"; then
+    if /usr/bin/plutil -p "$plist" 2>/dev/null | /usr/bin/grep -qi "Clocktower.app"; then
         log "removing stale launch agent $plist"
         launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
         rm -f "$plist"
     fi
 done
-
-cat > "$LAUNCH_AGENT_DEST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$BUNDLE_ID</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$APP_DIR/Contents/MacOS/Clocktower</string>
-    </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
-    </dict>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <false/>
-</dict>
-</plist>
-PLIST
 codesign --force --deep --sign - "$APP_DIR"
 "$LSREGISTER" -f "$APP_DIR" >/dev/null 2>&1 || true
 
@@ -78,10 +51,19 @@ log "killing stale Clocktower processes"
 /usr/bin/pkill -if '/Clocktower.app/Contents/MacOS/Clocktower|Clocktower.app' >/dev/null 2>&1 || true
 sleep 1
 
-log "reloading launch agent $LAUNCH_AGENT_DEST"
-launchctl bootout "gui/$(id -u)" "$LAUNCH_AGENT_DEST" >/dev/null 2>&1 || true
-launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENT_DEST"
-launchctl kickstart -k "gui/$(id -u)/$BUNDLE_ID" >/dev/null 2>&1 || true
+log "registering login item $APP_DIR"
+/usr/bin/osascript <<APPLESCRIPT
+tell application "System Events"
+    repeat with itemIndex from (count of login items) to 1 by -1
+        set itemRef to login item itemIndex
+        if the name of itemRef is "Clocktower" and the path of itemRef is "$APP_DIR" then
+            delete itemRef
+        end if
+    end repeat
+    make login item at end with properties {name:"Clocktower", path:"$APP_DIR", hidden:false}
+end tell
+APPLESCRIPT
+/usr/bin/open "$APP_DIR"
 
 log "install complete app=$APP_DIR"
 echo "Installed Clocktower to $APP_DIR"

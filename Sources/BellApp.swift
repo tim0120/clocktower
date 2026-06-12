@@ -22,6 +22,17 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         return f
     }()
 
+    nonisolated private static func describeAuthorizationStatus(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "notDetermined"
+        case .denied: return "denied"
+        case .authorized: return "authorized"
+        case .provisional: return "provisional"
+        case .ephemeral: return "ephemeral"
+        @unknown default: return "unknown(\(status.rawValue))"
+        }
+    }
+
     private var isCurrentlyAway: Bool {
         isScreenLocked || isScreenAsleep
     }
@@ -42,11 +53,22 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
 
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+        center.getNotificationSettings { settings in
+            logAsync("notifications settings authorizationStatus=\(Self.describeAuthorizationStatus(settings.authorizationStatus)) alertSetting=\(settings.alertSetting.rawValue) soundSetting=\(settings.soundSetting.rawValue)")
+        }
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             if let error {
                 logAsync("notifications authorization-error \(error.localizedDescription)")
             } else {
                 logAsync("notifications authorization granted=\(granted)")
+            }
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                logAsync("notifications settings-after-request authorizationStatus=\(Self.describeAuthorizationStatus(settings.authorizationStatus)) alertSetting=\(settings.alertSetting.rawValue) soundSetting=\(settings.soundSetting.rawValue)")
+            }
+            if granted {
+                Task { @MainActor in
+                    self?.scheduleNotifications()
+                }
             }
         }
 
@@ -73,12 +95,11 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     }
 
     private func configureStatusItem() {
-        if let image = NSImage(systemSymbolName: "circlebadge", accessibilityDescription: "Clocktower") {
-            image.isTemplate = true
-            statusItem.button?.image = image
-        } else {
-            statusItem.button?.title = "Bell"
-        }
+        statusItem.isVisible = true
+        statusItem.length = NSStatusItem.variableLength
+        statusItem.button?.image = makeStatusLogoImage()
+        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.title = ""
         statusItem.button?.toolTip = "Clocktower"
 
         let menu = NSMenu()
@@ -481,21 +502,87 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     private func refreshStatusUI() {
         enabledMenuItem?.title = config.isEnabled ? "Disable Clocktower" : "Enable Clocktower"
 
-        let symbolName: String
         if !config.isEnabled {
-            symbolName = "pause.circle"
-        } else if config.quietHoursEnabled, isWithinQuietHours(Date()) {
-            symbolName = "moon.circle"
-        } else {
-            symbolName = "circlebadge"
-        }
-
-        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Clocktower") {
+            if let image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "Clocktower") {
+                image.isTemplate = true
+                statusItem.button?.image = image
+            }
+            statusItem.button?.title = " Paused"
+            logAsync("status refreshed symbol=pause.circle enabled=\(config.isEnabled)")
+            return
+        } else if config.quietHoursEnabled, isWithinQuietHours(Date()),
+                  let image = NSImage(systemSymbolName: "moon.circle", accessibilityDescription: "Clocktower") {
             image.isTemplate = true
             statusItem.button?.image = image
-            statusItem.button?.title = ""
+            statusItem.button?.imagePosition = .imageLeading
+            statusItem.button?.title = " Quiet"
+            logAsync("status refreshed symbol=moon.circle enabled=\(config.isEnabled)")
+            return
         }
-        logAsync("status refreshed symbol=\(symbolName) enabled=\(config.isEnabled)")
+
+        statusItem.button?.image = makeStatusLogoImage()
+        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.title = ""
+        logAsync("status refreshed symbol=clocktower-logo enabled=\(config.isEnabled)")
+    }
+
+    private func makeStatusLogoImage() -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18))
+        image.lockFocus()
+
+        NSColor.black.setFill()
+        NSColor.black.setStroke()
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+            let sourceBounds = NSRect(x: 88, y: 48, width: 80, height: 160)
+            let targetBounds = NSRect(x: 4.5, y: 0, width: 9, height: 18)
+            let targetX = targetBounds.minX + ((x - sourceBounds.minX) / sourceBounds.width) * targetBounds.width
+            let targetY = targetBounds.maxY - ((y - sourceBounds.minY) / sourceBounds.height) * targetBounds.height
+            return NSPoint(x: targetX, y: targetY)
+        }
+
+        func rect(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat) -> NSRect {
+            let topLeft = point(x, y)
+            let bottomRight = point(x + width, y + height)
+            return NSRect(
+                x: topLeft.x,
+                y: bottomRight.y,
+                width: bottomRight.x - topLeft.x,
+                height: topLeft.y - bottomRight.y
+            )
+        }
+
+        let roof = NSBezierPath()
+        roof.move(to: point(88, 96))
+        roof.line(to: point(128, 48))
+        roof.line(to: point(168, 96))
+        roof.line(to: point(160, 96))
+        roof.line(to: point(128, 58))
+        roof.line(to: point(96, 96))
+        roof.close()
+        roof.fill()
+
+        NSBezierPath(rect: rect(88, 96, 80, 7)).fill()
+        NSBezierPath(rect: rect(88, 96, 7, 112)).fill()
+        NSBezierPath(rect: rect(161, 96, 7, 112)).fill()
+
+        let clockRect = rect(110, 115, 36, 36)
+        let clock = NSBezierPath(ovalIn: clockRect)
+        clock.lineWidth = 0.65
+        clock.stroke()
+
+        let hands = NSBezierPath()
+        hands.move(to: point(128, 121))
+        hands.line(to: point(128, 133))
+        hands.line(to: point(140, 133))
+        hands.lineWidth = 0.65
+        hands.lineCapStyle = .butt
+        hands.lineJoinStyle = .miter
+        hands.stroke()
+
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
     }
 
     private func isLikelyPresenting() -> Bool {

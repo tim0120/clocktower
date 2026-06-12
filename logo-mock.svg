@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Clocktower logo mock">
+  <rect width="256" height="256" fill="none"/>
+  <g fill="#111111">
+    <path d="M88 96 L128 48 L168 96 H160 L128 58 L96 96 Z"/>
+    <rect x="88" y="96" width="80" height="6"/>
+    <rect x="88" y="96" width="6" height="112"/>
+    <rect x="162" y="96" width="6" height="112"/>
+  </g>
+  <g fill="none" stroke="#111111" stroke-width="4" stroke-linecap="butt" stroke-linejoin="miter">
+    <circle cx="128" cy="133" r="18"/>
+    <path d="M128 121 V133 H140"/>
+  </g>
+</svg>
