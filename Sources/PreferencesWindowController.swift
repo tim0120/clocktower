@@ -16,7 +16,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     private let onSave: (BellConfig) -> Void
     private let onUtility: (PreferencesUtilityAction) -> Void
 
-    private let enabledCheckbox = NSButton(checkboxWithTitle: "Enable Clocktower", target: nil, action: nil)
+    private let enabledSwitch = NSSwitch()
     private let intervalField = NSTextField()
     private let titleField = NSTextField()
     private let bodyField = NSTextField()
@@ -79,7 +79,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     }
 
     private func buildUI(config: BellConfig) {
-        enabledCheckbox.state = config.isEnabled ? .on : .off
+        enabledSwitch.state = config.isEnabled ? .on : .off
         intervalField.stringValue = String(config.intervalMinutes)
         titleField.stringValue = config.title
         bodyField.stringValue = config.bodyTemplate
@@ -123,7 +123,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
             title: "General",
             detail: "Basic reminder settings for when Clocktower is actively running.",
             views: [
-                enabledCheckbox,
+                row(label: "Chimes", control: enabledSwitch),
                 row(label: "Interval (min)", control: intervalField),
                 row(label: "Title", control: titleField),
                 row(label: "Body", control: bodyField),
@@ -329,7 +329,7 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         let awayCatchUpWeekdays = selectedAwayCatchUpWeekdays()
 
         let config = BellConfig(
-            isEnabled: enabledCheckbox.state == .on,
+            isEnabled: enabledSwitch.state == .on,
             intervalMinutes: interval,
             title: title.isEmpty ? BellConfig.default.title : title,
             bodyTemplate: body.isEmpty ? BellConfig.default.bodyTemplate : body,

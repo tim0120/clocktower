@@ -95,6 +95,22 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.scheduleNotifications() }
         }
+        // Redraw the status icon when a quiet-hours boundary passes; nothing
+        // else fires at those moments.
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.statusStateKey() != self.lastStatusState else { return }
+                self.refreshStatusUI()
+            }
+        }
+    }
+
+    private var lastStatusState = ""
+
+    private func statusStateKey() -> String {
+        if !config.isEnabled { return "off" }
+        if config.quietHoursEnabled, isWithinQuietHours(Date()) { return "quiet" }
+        return "on"
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -568,6 +584,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     }
 
     private func refreshStatusUI() {
+        lastStatusState = statusStateKey()
         enabledMenuItem?.title = config.isEnabled ? "Disable Clocktower" : "Enable Clocktower"
 
         if !config.isEnabled {
