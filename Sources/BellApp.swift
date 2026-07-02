@@ -561,14 +561,13 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
             statusItem.button?.toolTip = "Clocktower Paused"
             logAsync("status refreshed symbol=clocktower-logo-empty enabled=\(config.isEnabled)")
             return
-        } else if config.quietHoursEnabled, isWithinQuietHours(Date()),
-                  let image = NSImage(systemSymbolName: "moon.circle", accessibilityDescription: "Clocktower") {
-            image.isTemplate = true
-            statusItem.button?.image = image
+        } else if config.quietHoursEnabled, isWithinQuietHours(Date()) {
+            // Quiet hours: tower with a handless clock face.
+            statusItem.button?.image = makeStatusLogoImage(showsHands: false)
             statusItem.button?.imagePosition = .imageLeading
-            statusItem.button?.title = " Quiet"
+            statusItem.button?.title = ""
             statusItem.button?.toolTip = "Clocktower Quiet"
-            logAsync("status refreshed symbol=moon.circle enabled=\(config.isEnabled)")
+            logAsync("status refreshed symbol=clocktower-logo-quiet enabled=\(config.isEnabled)")
             return
         }
 
@@ -579,7 +578,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         logAsync("status refreshed symbol=clocktower-logo enabled=\(config.isEnabled)")
     }
 
-    private func makeStatusLogoImage(showsClockFace: Bool = true) -> NSImage {
+    private func makeStatusLogoImage(showsClockFace: Bool = true, showsHands: Bool = true) -> NSImage {
         let image = NSImage(size: NSSize(width: 18, height: 18))
         image.lockFocus()
 
@@ -633,6 +632,12 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         let clock = NSBezierPath(ovalIn: clockRect)
         clock.lineWidth = 0.85
         clock.stroke()
+
+        guard showsHands else {
+            image.unlockFocus()
+            image.isTemplate = true
+            return image
+        }
 
         let hands = NSBezierPath()
         hands.move(to: NSPoint(x: cx, y: clockCenterY + 1.3))
