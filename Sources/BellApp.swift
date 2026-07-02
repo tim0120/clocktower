@@ -555,7 +555,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         enabledMenuItem?.title = config.isEnabled ? "Disable Clocktower" : "Enable Clocktower"
 
         if !config.isEnabled {
-            statusItem.button?.image = makeStatusLogoImage(showsClockFace: false)
+            statusItem.button?.image = makeStatusLogoImage(face: .none)
             statusItem.button?.imagePosition = .imageLeading
             statusItem.button?.title = ""
             statusItem.button?.toolTip = "Clocktower Paused"
@@ -563,7 +563,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
             return
         } else if config.quietHoursEnabled, isWithinQuietHours(Date()) {
             // Quiet hours: tower with a handless clock face.
-            statusItem.button?.image = makeStatusLogoImage(showsHands: false)
+            statusItem.button?.image = makeStatusLogoImage(face: .moon)
             statusItem.button?.imagePosition = .imageLeading
             statusItem.button?.title = ""
             statusItem.button?.toolTip = "Clocktower Quiet"
@@ -578,7 +578,13 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         logAsync("status refreshed symbol=clocktower-logo enabled=\(config.isEnabled)")
     }
 
-    private func makeStatusLogoImage(showsClockFace: Bool = true, showsHands: Bool = true) -> NSImage {
+    private enum StatusFace {
+        case clock  // enabled: clock face with hands
+        case moon   // quiet hours: crescent moon
+        case none   // disabled: empty tower
+    }
+
+    private func makeStatusLogoImage(face: StatusFace = .clock) -> NSImage {
         let image = NSImage(size: NSSize(width: 18, height: 18))
         image.lockFocus()
 
@@ -596,6 +602,18 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         let bottom: CGFloat = 1.3
         let eaves: CGFloat = bottom + 2 * half
         let apex: CGFloat = eaves + half * 1.732
+        let faceCenterY: CGFloat = (bottom + eaves) / 2
+
+        // The moon is drawn before the tower strokes because its crescent is
+        // made by punching out alpha, which would erase overlapping ink.
+        if face == .moon {
+            NSColor.black.setFill()
+            let d: CGFloat = 4.9
+            NSBezierPath(ovalIn: NSRect(x: cx - d / 2, y: faceCenterY - d / 2, width: d, height: d)).fill()
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            NSBezierPath(ovalIn: NSRect(x: cx - d / 2 + 1.5, y: faceCenterY - d / 2 + 1.0, width: d, height: d)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+        }
 
         let tower = NSBezierPath()
         tower.move(to: NSPoint(x: left, y: bottom))
@@ -615,13 +633,13 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         beam.lineCapStyle = .butt
         beam.stroke()
 
-        guard showsClockFace else {
+        guard face == .clock else {
             image.unlockFocus()
             image.isTemplate = true
             return image
         }
 
-        let clockCenterY: CGFloat = (bottom + eaves) / 2
+        let clockCenterY = faceCenterY
         let clockDiameter: CGFloat = 4.7
         let clockRect = NSRect(
             x: cx - clockDiameter / 2,
@@ -632,12 +650,6 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         let clock = NSBezierPath(ovalIn: clockRect)
         clock.lineWidth = 0.85
         clock.stroke()
-
-        guard showsHands else {
-            image.unlockFocus()
-            image.isTemplate = true
-            return image
-        }
 
         let hands = NSBezierPath()
         hands.move(to: NSPoint(x: cx, y: clockCenterY + 1.3))
