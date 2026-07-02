@@ -18,36 +18,57 @@ let iconEntries: [(name: String, pixels: Int)] = [
 
 try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
+// Same geometry as makeStatusLogoImage in BellApp.swift (18pt design space):
+// square body + equilateral roof, single stroke weight, open bottom.
+// Rendered into the central ~72% of the icon canvas so the app icon keeps
+// conventional margins.
 func drawLogo(scale: CGFloat) {
-    func x(_ value: CGFloat) -> CGFloat { value * scale }
-    func y(_ value: CGFloat) -> CGFloat { (256 - value) * scale }
+    let inset: CGFloat = 0.72
+    let u = scale * 256 * inset / 18
+    let off = scale * 256 * (1 - inset) / 2
+    func p(_ px: CGFloat, _ py: CGFloat) -> NSPoint { NSPoint(x: off + px * u, y: off + py * u) }
 
     black.setFill()
     black.setStroke()
 
-    let roof = NSBezierPath()
-    roof.move(to: NSPoint(x: x(88), y: y(96)))
-    roof.line(to: NSPoint(x: x(128), y: y(48)))
-    roof.line(to: NSPoint(x: x(168), y: y(96)))
-    roof.line(to: NSPoint(x: x(160), y: y(96)))
-    roof.line(to: NSPoint(x: x(128), y: y(58)))
-    roof.line(to: NSPoint(x: x(96), y: y(96)))
-    roof.close()
-    roof.fill()
+    let strokeW: CGFloat = 1.45
+    let cx: CGFloat = 9
+    let half: CGFloat = 4.05
+    let left = cx - half
+    let right = cx + half
+    let bottom: CGFloat = 1.3
+    let eaves = bottom + 2 * half
+    let apex = eaves + half * 1.732
 
-    NSBezierPath(rect: NSRect(x: x(88), y: y(102), width: 80 * scale, height: 6 * scale)).fill()
-    NSBezierPath(rect: NSRect(x: x(88), y: y(208), width: 6 * scale, height: 112 * scale)).fill()
-    NSBezierPath(rect: NSRect(x: x(162), y: y(208), width: 6 * scale, height: 112 * scale)).fill()
+    let tower = NSBezierPath()
+    tower.move(to: p(left, bottom))
+    tower.line(to: p(left, eaves))
+    tower.line(to: p(cx, apex))
+    tower.line(to: p(right, eaves))
+    tower.line(to: p(right, bottom))
+    tower.lineWidth = strokeW * u
+    tower.lineCapStyle = .butt
+    tower.lineJoinStyle = .miter
+    tower.stroke()
 
-    let clock = NSBezierPath(ovalIn: NSRect(x: x(110), y: y(151), width: 36 * scale, height: 36 * scale))
-    clock.lineWidth = max(1, 4 * scale)
+    let beam = NSBezierPath()
+    beam.move(to: p(left, eaves))
+    beam.line(to: p(right, eaves))
+    beam.lineWidth = strokeW * u
+    beam.lineCapStyle = .butt
+    beam.stroke()
+
+    let cy = (bottom + eaves) / 2
+    let d: CGFloat = 4.7
+    let clock = NSBezierPath(ovalIn: NSRect(x: off + (cx - d / 2) * u, y: off + (cy - d / 2) * u, width: d * u, height: d * u))
+    clock.lineWidth = 0.85 * u
     clock.stroke()
 
     let hands = NSBezierPath()
-    hands.move(to: NSPoint(x: x(128), y: y(121)))
-    hands.line(to: NSPoint(x: x(128), y: y(133)))
-    hands.line(to: NSPoint(x: x(140), y: y(133)))
-    hands.lineWidth = max(1, 4 * scale)
+    hands.move(to: p(cx, cy + 1.3))
+    hands.line(to: p(cx, cy))
+    hands.line(to: p(cx + 1.2, cy))
+    hands.lineWidth = 0.65 * u
     hands.lineCapStyle = .butt
     hands.lineJoinStyle = .miter
     hands.stroke()

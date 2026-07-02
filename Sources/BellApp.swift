@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import UserNotifications
+import WidgetKit
 
 @MainActor
 final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -81,6 +82,12 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
                   app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
             self?.lastNonSelfApp = app
         }
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(externalConfigDidChange),
+            name: .clocktowerConfigDidChange,
+            object: nil
+        )
         lastNonSelfApp = NSWorkspace.shared.frontmostApplication
         configureAwayObservers()
 
@@ -92,6 +99,26 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
 
     func applicationWillTerminate(_ notification: Notification) {
         logAsync("app will-terminate")
+    }
+
+    // Handles clocktower:// URLs. The Control Center button uses
+    // clocktower://toggle because a custom AppIntent can't resolve its
+    // parameters without Xcode-generated AppIntents metadata; OpenURLIntent
+    // (whose metadata ships with the OS) routes through here instead.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme == "clocktower" {
+            switch url.host() ?? url.pathComponents.first(where: { $0 != "/" }) {
+            case "toggle":
+                config.isEnabled.toggle()
+                configStore.save(config)
+                logAsync("url toggle-enabled isEnabled=\(config.isEnabled)")
+                scheduleNotifications()
+                refreshStatusUI()
+                reloadControlWidgets()
+            default:
+                logAsync("url ignored url=\(url.absoluteString)")
+            }
+        }
     }
 
     private func configureStatusItem() {
@@ -109,12 +136,6 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         menu.addItem(enabledMenuItem)
         menu.addItem(NSMenuItem(title: "Preferences", action: #selector(openPreferences), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Send Test Bell", action: #selector(sendTestBell), keyEquivalent: "t"))
-        menu.addItem(NSMenuItem(title: "Open Config", action: #selector(openConfig), keyEquivalent: "o"))
-        menu.addItem(NSMenuItem(title: "Open Logs", action: #selector(openLogs), keyEquivalent: "l"))
-        menu.addItem(NSMenuItem(title: "Clear Notifications", action: #selector(clearNotificationsFromMenu), keyEquivalent: "k"))
-        menu.addItem(NSMenuItem(title: "Reload Config", action: #selector(reloadConfig), keyEquivalent: "r"))
-        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
         statusItem.menu = menu
@@ -123,7 +144,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
 
     // MARK: - Menu actions
 
-    @objc private func sendTestBell() {
+    private func sendTestBell() {
         guard shouldNotify(at: Date(), context: "test") else {
             logAsync("notification test skipped")
             return
@@ -136,11 +157,22 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         if preferencesWindowController == nil {
             preferencesWindowController = PreferencesWindowController(
                 configStore: configStore,
-                config: config
+                config: config,
+                onUtility: { [weak self] action in
+                    switch action {
+                    case .sendTestBell:
+                        self?.sendTestBell()
+                    case .clearNotifications:
+                        self?.clearNotifications(reason: "preferences")
+                    case .reloadConfig:
+                        self?.reloadConfig()
+                    }
+                }
             ) { [weak self] updatedConfig in
                 self?.config = updatedConfig
                 self?.scheduleNotifications()
                 self?.refreshStatusUI()
+                self?.reloadControlWidgets()
                 self?.preferencesWindowController = nil
             }
         }
@@ -148,25 +180,12 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func openConfig() {
-        logAsync("menu open-config")
-        NSWorkspace.shared.open(configStore.configURL)
-    }
-
-    @objc private func openLogs() {
-        logAsync("menu open-logs")
-        NSWorkspace.shared.open(configStore.logURL)
-    }
-
-    @objc private func reloadConfig() {
+    private func reloadConfig() {
         config = configStore.load()
         logAsync("menu reload-config enabled=\(config.isEnabled) intervalMinutes=\(config.intervalMinutes) quietHoursEnabled=\(config.quietHoursEnabled)")
         scheduleNotifications()
         refreshStatusUI()
-    }
-
-    @objc private func clearNotificationsFromMenu() {
-        clearNotifications(reason: "menu")
+        reloadControlWidgets()
     }
 
     @objc private func toggleEnabled() {
@@ -175,6 +194,21 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         logAsync("menu toggle-enabled isEnabled=\(config.isEnabled)")
         scheduleNotifications()
         refreshStatusUI()
+        reloadControlWidgets()
+    }
+
+    @objc private func externalConfigDidChange(_ notification: Notification) {
+        config = configStore.load()
+        logAsync("config reload-external enabled=\(config.isEnabled) intervalMinutes=\(config.intervalMinutes) quietHoursEnabled=\(config.quietHoursEnabled)")
+        scheduleNotifications()
+        refreshStatusUI()
+        reloadControlWidgets()
+    }
+
+    private func reloadControlWidgets() {
+        if #available(macOS 26.0, *) {
+            ControlCenter.shared.reloadControls(ofKind: ClocktowerIntegration.controlKind)
+        }
     }
 
     @objc private func quit() {
@@ -197,6 +231,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         }
 
         var scheduledCount = 0
+        var scheduledDates: [Date] = []
         for date in nextTriggerDates() {
             guard shouldNotify(at: date, context: "scheduled") else { continue }
             let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
@@ -212,8 +247,19 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
                 }
             }
             scheduledCount += 1
+            scheduledDates.append(date)
         }
-        logAsync("schedule completed count=\(scheduledCount)")
+        let upcoming = scheduledDates.prefix(3).map { Self.timeFormatter.string(from: $0) }.joined(separator: ", ")
+        logAsync("schedule completed count=\(scheduledCount) intervalMinutes=\(config.intervalMinutes) next=[\(upcoming)]")
+
+        // Audit what the system actually holds for us. If this count ever
+        // exceeds what we just scheduled, stale requests (e.g. from a
+        // previously-signed install) are lingering in the notification store.
+        let expectedCount = scheduledCount
+        center.getPendingNotificationRequests { requests in
+            let ids = requests.map(\.identifier).sorted().prefix(3).joined(separator: ", ")
+            logAsync("schedule pending-audit systemCount=\(requests.count) expected=\(expectedCount) first=[\(ids)]")
+        }
     }
 
     private func nextTriggerDates() -> [Date] {
@@ -425,6 +471,12 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
             return
         }
 
+        let intervalSeconds = Double(max(1, config.intervalMinutes) * 60)
+        guard end.timeIntervalSince(start) >= intervalSeconds else {
+            logAsync("away summary skipped reason=away-shorter-than-interval")
+            return
+        }
+
         let missedDates = missedTriggerDates(from: start, to: end)
         guard let _ = missedDates.first else {
             logAsync("away summary skipped reason=no-missed-intervals")
@@ -503,12 +555,11 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         enabledMenuItem?.title = config.isEnabled ? "Disable Clocktower" : "Enable Clocktower"
 
         if !config.isEnabled {
-            if let image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "Clocktower") {
-                image.isTemplate = true
-                statusItem.button?.image = image
-            }
-            statusItem.button?.title = " Paused"
-            logAsync("status refreshed symbol=pause.circle enabled=\(config.isEnabled)")
+            statusItem.button?.image = makeStatusLogoImage(showsClockFace: false)
+            statusItem.button?.imagePosition = .imageLeading
+            statusItem.button?.title = ""
+            statusItem.button?.toolTip = "Clocktower Paused"
+            logAsync("status refreshed symbol=clocktower-logo-empty enabled=\(config.isEnabled)")
             return
         } else if config.quietHoursEnabled, isWithinQuietHours(Date()),
                   let image = NSImage(systemSymbolName: "moon.circle", accessibilityDescription: "Clocktower") {
@@ -516,6 +567,7 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
             statusItem.button?.image = image
             statusItem.button?.imagePosition = .imageLeading
             statusItem.button?.title = " Quiet"
+            statusItem.button?.toolTip = "Clocktower Quiet"
             logAsync("status refreshed symbol=moon.circle enabled=\(config.isEnabled)")
             return
         }
@@ -523,58 +575,69 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         statusItem.button?.image = makeStatusLogoImage()
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.title = ""
+        statusItem.button?.toolTip = "Clocktower"
         logAsync("status refreshed symbol=clocktower-logo enabled=\(config.isEnabled)")
     }
 
-    private func makeStatusLogoImage() -> NSImage {
+    private func makeStatusLogoImage(showsClockFace: Bool = true) -> NSImage {
         let image = NSImage(size: NSSize(width: 18, height: 18))
         image.lockFocus()
 
-        NSColor.black.setFill()
         NSColor.black.setStroke()
 
-        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
-            let sourceBounds = NSRect(x: 88, y: 48, width: 80, height: 160)
-            let targetBounds = NSRect(x: 4.5, y: 0, width: 9, height: 18)
-            let targetX = targetBounds.minX + ((x - sourceBounds.minX) / sourceBounds.width) * targetBounds.width
-            let targetY = targetBounds.maxY - ((y - sourceBounds.minY) / sourceBounds.height) * targetBounds.height
-            return NSPoint(x: targetX, y: targetY)
+        // Tower drawn as one open-bottom outline (walls flowing into the gable)
+        // so every joint is a clean miter and the weight is uniform throughout.
+        // The body is a square (2*half x 2*half in centerlines) topped by an
+        // equilateral roof, with a beam across the eaves connecting the two.
+        let strokeW: CGFloat = 1.45
+        let cx: CGFloat = 9
+        let half: CGFloat = 4.05
+        let left: CGFloat = cx - half
+        let right: CGFloat = cx + half
+        let bottom: CGFloat = 1.3
+        let eaves: CGFloat = bottom + 2 * half
+        let apex: CGFloat = eaves + half * 1.732
+
+        let tower = NSBezierPath()
+        tower.move(to: NSPoint(x: left, y: bottom))
+        tower.line(to: NSPoint(x: left, y: eaves))
+        tower.line(to: NSPoint(x: cx, y: apex))
+        tower.line(to: NSPoint(x: right, y: eaves))
+        tower.line(to: NSPoint(x: right, y: bottom))
+        tower.lineWidth = strokeW
+        tower.lineCapStyle = .butt
+        tower.lineJoinStyle = .miter
+        tower.stroke()
+
+        let beam = NSBezierPath()
+        beam.move(to: NSPoint(x: left, y: eaves))
+        beam.line(to: NSPoint(x: right, y: eaves))
+        beam.lineWidth = strokeW
+        beam.lineCapStyle = .butt
+        beam.stroke()
+
+        guard showsClockFace else {
+            image.unlockFocus()
+            image.isTemplate = true
+            return image
         }
 
-        func rect(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat) -> NSRect {
-            let topLeft = point(x, y)
-            let bottomRight = point(x + width, y + height)
-            return NSRect(
-                x: topLeft.x,
-                y: bottomRight.y,
-                width: bottomRight.x - topLeft.x,
-                height: topLeft.y - bottomRight.y
-            )
-        }
-
-        let roof = NSBezierPath()
-        roof.move(to: point(88, 96))
-        roof.line(to: point(128, 48))
-        roof.line(to: point(168, 96))
-        roof.line(to: point(160, 96))
-        roof.line(to: point(128, 58))
-        roof.line(to: point(96, 96))
-        roof.close()
-        roof.fill()
-
-        NSBezierPath(rect: rect(88, 96, 80, 7)).fill()
-        NSBezierPath(rect: rect(88, 96, 7, 112)).fill()
-        NSBezierPath(rect: rect(161, 96, 7, 112)).fill()
-
-        let clockRect = rect(110, 115, 36, 36)
+        let clockCenterY: CGFloat = (bottom + eaves) / 2
+        let clockDiameter: CGFloat = 4.7
+        let clockRect = NSRect(
+            x: cx - clockDiameter / 2,
+            y: clockCenterY - clockDiameter / 2,
+            width: clockDiameter,
+            height: clockDiameter
+        )
         let clock = NSBezierPath(ovalIn: clockRect)
-        clock.lineWidth = 0.65
+        clock.lineWidth = 0.85
         clock.stroke()
 
         let hands = NSBezierPath()
-        hands.move(to: point(128, 121))
-        hands.line(to: point(128, 133))
-        hands.line(to: point(140, 133))
+        hands.move(to: NSPoint(x: cx, y: clockCenterY + 1.3))
+        hands.line(to: NSPoint(x: cx, y: clockCenterY))
+        hands.line(to: NSPoint(x: cx + 1.2, y: clockCenterY))
         hands.lineWidth = 0.65
         hands.lineCapStyle = .butt
         hands.lineJoinStyle = .miter

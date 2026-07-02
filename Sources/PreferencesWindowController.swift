@@ -1,9 +1,20 @@
 import AppKit
 
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+enum PreferencesUtilityAction {
+    case sendTestBell
+    case clearNotifications
+    case reloadConfig
+}
+
 @MainActor
 final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     private let configStore: ConfigStore
     private let onSave: (BellConfig) -> Void
+    private let onUtility: (PreferencesUtilityAction) -> Void
 
     private let enabledCheckbox = NSButton(checkboxWithTitle: "Enable Clocktower", target: nil, action: nil)
     private let intervalField = NSTextField()
@@ -38,8 +49,14 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
 
     private var previewSound: NSSound?
 
-    init(configStore: ConfigStore, config: BellConfig, onSave: @escaping (BellConfig) -> Void) {
+    init(
+        configStore: ConfigStore,
+        config: BellConfig,
+        onUtility: @escaping (PreferencesUtilityAction) -> Void,
+        onSave: @escaping (BellConfig) -> Void
+    ) {
         self.configStore = configStore
+        self.onUtility = onUtility
         self.onSave = onSave
 
         let window = NSWindow(
@@ -142,7 +159,9 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         formStack.addArrangedSubview(separator())
         formStack.addArrangedSubview(awayCatchUpSection)
 
-        let documentView = NSView()
+        // Flipped so the scroll view anchors content to the top on open
+        // (default AppKit coordinates would start it scrolled to the bottom).
+        let documentView = FlippedView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(formStack)
 
@@ -167,8 +186,21 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
         buttons.addArrangedSubview(NSView())
         buttons.addArrangedSubview(saveButton)
 
+        // Utility actions that used to live in the status menu.
+        let utilities = NSStackView()
+        utilities.orientation = .horizontal
+        utilities.spacing = 8
+        utilities.alignment = .centerY
+        utilities.translatesAutoresizingMaskIntoConstraints = false
+        utilities.addArrangedSubview(NSButton(title: "Send Test Bell", target: self, action: #selector(sendTestBell)))
+        utilities.addArrangedSubview(NSButton(title: "Clear Notifications", target: self, action: #selector(clearNotifications)))
+        utilities.addArrangedSubview(NSButton(title: "Reload Config", target: self, action: #selector(reloadConfig)))
+        utilities.addArrangedSubview(NSButton(title: "Open Logs", target: self, action: #selector(openLogs)))
+        utilities.addArrangedSubview(NSView())
+
         let contentView = NSView()
         contentView.addSubview(scrollView)
+        contentView.addSubview(utilities)
         contentView.addSubview(buttons)
         window?.contentView = contentView
 
@@ -176,7 +208,11 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
             scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
             scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -16),
+            scrollView.bottomAnchor.constraint(equalTo: utilities.topAnchor, constant: -16),
+
+            utilities.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            utilities.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            utilities.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -12),
 
             buttons.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             buttons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
@@ -257,6 +293,23 @@ final class PreferencesWindowController: NSWindowController, NSMenuDelegate {
     @objc private func openConfig() {
         logAsync("preferences open-json")
         NSWorkspace.shared.open(configStore.configURL)
+    }
+
+    @objc private func openLogs() {
+        logAsync("preferences open-logs")
+        NSWorkspace.shared.open(configStore.logURL)
+    }
+
+    @objc private func sendTestBell() {
+        onUtility(.sendTestBell)
+    }
+
+    @objc private func clearNotifications() {
+        onUtility(.clearNotifications)
+    }
+
+    @objc private func reloadConfig() {
+        onUtility(.reloadConfig)
     }
 
     @objc private func quietHoursToggled() {
