@@ -218,7 +218,21 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
 
     // MARK: - Scheduling
 
+    // Debounced: callers often fire in bursts (toggle + reload + external
+    // change), and overlapping clear/add sequences race each other, silently
+    // dropping a few requests.
+    private var pendingScheduleWork: DispatchWorkItem?
+
     private func scheduleNotifications() {
+        pendingScheduleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor in self?.performScheduleNotifications() }
+        }
+        pendingScheduleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    private func performScheduleNotifications() {
         let center = UNUserNotificationCenter.current()
         clearNotifications(reason: "schedule")
         guard config.isEnabled else {
@@ -256,9 +270,11 @@ final class BellApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         // exceeds what we just scheduled, stale requests (e.g. from a
         // previously-signed install) are lingering in the notification store.
         let expectedCount = scheduledCount
-        center.getPendingNotificationRequests { requests in
-            let ids = requests.map(\.identifier).sorted().prefix(3).joined(separator: ", ")
-            logAsync("schedule pending-audit systemCount=\(requests.count) expected=\(expectedCount) first=[\(ids)]")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            center.getPendingNotificationRequests { requests in
+                let ids = requests.map(\.identifier).sorted().prefix(3).joined(separator: ", ")
+                logAsync("schedule pending-audit systemCount=\(requests.count) expected=\(expectedCount) first=[\(ids)]")
+            }
         }
     }
 
